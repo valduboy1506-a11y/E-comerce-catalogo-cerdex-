@@ -1,0 +1,10 @@
+{
+  "description": "Browse and shop Cerdex's paint accessories catalog with intuitive category filters, detailed product info, a virtual assistant, and seamless cart management.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
