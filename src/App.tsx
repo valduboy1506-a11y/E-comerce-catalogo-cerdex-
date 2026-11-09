@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { catalogProducts, type CatalogProduct } from "./products";
+import {
+  catalogGroups,
+  findCatalogGroup,
+  type CatalogGroup,
+  type ProductVariant,
+  imageByProduct,
+} from "./catalogData";
 
 type IconName =
   | "arrow"
@@ -28,7 +35,6 @@ type Route =
   | { view: "category"; category: string }
   | { view: "detail"; productId: string };
 
-const assets = "/assets/attachments/";
 const categories = [
   { name: "Brochas", key: "Brocha", icon: "brush" as IconName, copy: "27 productos en 6 líneas especializadas." },
   { name: "Fundas y Rodillos", key: "Fundas", icon: "roller" as IconName, copy: "12 opciones para acabados precisos." },
@@ -52,11 +58,6 @@ const categories = [
     copy: "11 lijas profesionales para cada preparación.",
   },
 ];
-
-const imageByProduct: Record<string, string> = {
-  "FX2-402157": `${assets}cdba3b5a-8ec1-45a5-bf5d-797d80bdfac6`,
-  "FX1-264274": `${assets}15a1826f-5a76-48e2-8a94-44b492a3679f`,
-};
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -100,84 +101,75 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
 function Mascot() {
   return (
     <span className="mascot" aria-hidden="true">
-      <svg viewBox="0 0 64 64">
-        <circle cx="13" cy="20" r="9" fill="#8c552f" />
-        <circle cx="51" cy="20" r="9" fill="#8c552f" />
-        <circle cx="32" cy="31" r="24" fill="#b77442" />
-        <ellipse cx="32" cy="39" rx="16" ry="14" fill="#efd0a7" />
-        <circle cx="23" cy="27" r="3" fill="#1a1a1a" />
-        <circle cx="41" cy="27" r="3" fill="#1a1a1a" />
-        <ellipse cx="32" cy="35" rx="5" ry="4" fill="#1a1a1a" />
-        <path d="M25 42c4 4 10 4 14 0" fill="none" stroke="#1a1a1a" strokeWidth="2.5" strokeLinecap="round" />
-        <path d="M28 43v7h4v-6m4-1v7h-4v-6" fill="#fff" stroke="#1a1a1a" strokeWidth="1.5" />
-        <path d="M16 13c7-8 25-9 34 0" fill="none" stroke="#e31e24" strokeWidth="7" strokeLinecap="round" />
-      </svg>
+      <img
+        src="/assets/dex-avatar"
+        alt="Dex"
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+      />
     </span>
   );
 }
 
+let processedLogoCanvas: HTMLCanvasElement | null = null;
+let isProcessingLogo = false;
+const logoListeners: (() => void)[] = [];
+
 function Logo() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    const image = new Image();
-    image.src = "/assets/cerdex-logo";
-    image.onload = () => {
-      const source = document.createElement("canvas");
-      source.width = image.naturalWidth;
-      source.height = image.naturalHeight;
-      const context = source.getContext("2d", { willReadFrequently: true });
-      const target = canvasRef.current;
-      if (!context || !target) return;
+    const target = canvasRef.current;
+    if (!target) return;
 
-      context.drawImage(image, 0, 0);
-      const imageData = context.getImageData(0, 0, source.width, source.height);
-      const { data } = imageData;
-      const visited = new Uint8Array(source.width * source.height);
-      const queue = new Int32Array(source.width * source.height);
-      let head = 0;
-      let tail = 0;
+    if (processedLogoCanvas) {
+      target.width = processedLogoCanvas.width;
+      target.height = processedLogoCanvas.height;
+      const ctx = target.getContext("2d");
+      if (ctx) ctx.drawImage(processedLogoCanvas, 0, 0);
+      return;
+    }
 
-      const addPixel = (index: number) => {
-        if (index < 0 || index >= visited.length || visited[index]) return;
-        const offset = index * 4;
-        const isBackground = data[offset] > 225 && data[offset + 1] > 225 && data[offset + 2] > 225;
-        if (!isBackground) return;
-        visited[index] = 1;
-        queue[tail++] = index;
-      };
+    const onProcessed = () => {
+      if (!processedLogoCanvas || !canvasRef.current) return;
+      canvasRef.current.width = processedLogoCanvas.width;
+      canvasRef.current.height = processedLogoCanvas.height;
+      const ctx = canvasRef.current.getContext("2d");
+      if (ctx) ctx.drawImage(processedLogoCanvas, 0, 0);
+    };
 
-      for (let x = 0; x < source.width; x += 1) {
-        addPixel(x);
-        addPixel((source.height - 1) * source.width + x);
-      }
-      for (let y = 0; y < source.height; y += 1) {
-        addPixel(y * source.width);
-        addPixel(y * source.width + source.width - 1);
-      }
+    logoListeners.push(onProcessed);
 
-      while (head < tail) {
-        const index = queue[head++];
-        const x = index % source.width;
-        const y = Math.floor(index / source.width);
-        data[index * 4 + 3] = 0;
-        if (x > 0) addPixel(index - 1);
-        if (x < source.width - 1) addPixel(index + 1);
-        if (y > 0) addPixel(index - source.width);
-        if (y < source.height - 1) addPixel(index + source.width);
-      }
+    if (isProcessingLogo) return;
+    isProcessingLogo = true;
 
-      context.putImageData(imageData, 0, 0);
-      let left = source.width;
-      let top = source.height;
+    const source = new Image();
+    source.src = "/assets/cerdex-logo";
+    source.onload = () => {
+      const helper = document.createElement("canvas");
+      helper.width = source.naturalWidth;
+      helper.height = source.naturalHeight;
+      const ctx = helper.getContext("2d");
+      if (!ctx) return;
+
+      ctx.drawImage(source, 0, 0);
+      const { data, width: imgW, height: imgH } = ctx.getImageData(0, 0, helper.width, helper.height);
+      let top = imgH;
+      let left = imgW;
       let right = 0;
       let bottom = 0;
-      for (let y = 0; y < source.height; y += 1) {
-        for (let x = 0; x < source.width; x += 1) {
-          if (data[(y * source.width + x) * 4 + 3] > 0) {
+
+      for (let y = 0; y < imgH; y += 1) {
+        for (let x = 0; x < imgW; x += 1) {
+          const index = (y * imgW + x) * 4;
+          const r = data[index];
+          const g = data[index + 1];
+          const b = data[index + 2];
+          const a = data[index + 3];
+          const isWhite = r > 242 && g > 242 && b > 242;
+          if (a > 20 && !isWhite) {
+            top = Math.min(top, y);
             left = Math.min(left, x);
             right = Math.max(right, x);
-            top = Math.min(top, y);
             bottom = Math.max(bottom, y);
           }
         }
@@ -185,9 +177,24 @@ function Logo() {
       const padding = 3;
       const width = right - left + 1 + padding * 2;
       const height = bottom - top + 1 + padding * 2;
-      target.width = width;
-      target.height = height;
-      target.getContext("2d")?.drawImage(source, left, top, width - padding * 2, height - padding * 2, padding, padding, width - padding * 2, height - padding * 2);
+
+      const cachedCanvas = document.createElement("canvas");
+      cachedCanvas.width = width;
+      cachedCanvas.height = height;
+      cachedCanvas.getContext("2d")?.drawImage(
+        source,
+        left,
+        top,
+        width - padding * 2,
+        height - padding * 2,
+        padding,
+        padding,
+        width - padding * 2,
+        height - padding * 2
+      );
+
+      processedLogoCanvas = cachedCanvas;
+      logoListeners.forEach((cb) => cb());
     };
   }, []);
 
@@ -210,14 +217,24 @@ function categoryIcon(category: string): IconName {
   return categories.find((item) => item.key === category)?.icon ?? "tool";
 }
 
-function ProductVisual({ product, large = false }: { product: CatalogProduct; large?: boolean }) {
-  const image = imageByProduct[product.material];
-  if (image) {
-    return <img className={large ? "detail-photo" : ""} src={image} alt={product.descripcion} />;
+function ProductVisual({
+  imageSrc,
+  fallbackCategory = "tool",
+  alt = "Cerdex",
+  large = false,
+}: {
+  imageSrc?: string;
+  fallbackCategory?: string;
+  alt?: string;
+  large?: boolean;
+}) {
+  if (imageSrc) {
+    const className = [large ? "detail-photo" : "", "family-product-image"].filter(Boolean).join(" ");
+    return <img className={className} src={imageSrc} alt={alt} />;
   }
   return (
     <div className={`product-illustration ${large ? "visual-large" : ""}`}>
-      <Icon name={categoryIcon(product.categoriaVista)} size={large ? 150 : 86} />
+      <Icon name={categoryIcon(fallbackCategory)} size={large ? 150 : 86} />
       <Logo />
     </div>
   );
@@ -233,69 +250,19 @@ function parseRoute(): Route {
 
 function navigate(hash: string) {
   window.location.hash = hash;
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo(0, 0);
 }
 
-function HomeView() {
+function CategorySelectionView() {
   return (
-    <>
-      <section className="hero">
-        <img src="/assets/cerdex-factory-hero" alt="Planta industrial y oficinas de Cerdex en Valencia" />
-        <div className="hero-shade" />
-        <div className="hero-copy">
-          <div className="eyebrow">Fabricación venezolana · Desde 1988</div>
-          <h1>
-            Herramientas que dejan
-            <br />
-            <strong>huella en cada proyecto.</strong>
-          </h1>
-          <p>CERDEX: Innovando tu espacio con cada trazo.</p>
-          <AppButton className="primary-cta" onClick={() => navigate("#catalogo")}>
-            Explorar catálogo <Icon name="arrow" size={19} />
-          </AppButton>
-        </div>
-        <div className="hero-stat">
-          <strong>+144</strong>
-          <span>PRODUCTOS PARA SU ELECCIÓN</span>
-        </div>
-      </section>
-
-      <section className="home-intro" id="nosotros">
-        <div className="home-logo-panel">
-          <Logo />
-        </div>
-        <div>
-          <span className="section-kicker">Hecho para durar</span>
-          <h2>Calidad que se siente desde el primer trazo.</h2>
-        </div>
-        <p>
-          Diseñamos accesorios de pintura y herramientas para profesionales que exigen precisión, resistencia y un
-          acabado impecable. Nuestro catálogo ahora te permite explorar cada familia por separado.
-        </p>
-      </section>
-
-      <section className="home-catalog-cta">
-        <div>
-          <span>Catálogo Cerdex</span>
-          <h2>Encuentra la herramienta exacta para tu próximo proyecto.</h2>
-        </div>
-        <AppButton onClick={() => navigate("#catalogo")}>
-          Ver todas las categorías <Icon name="arrow" />
-        </AppButton>
-      </section>
-
-      <ContactSection />
-    </>
-  );
-}
-
-function CatalogView() {
-  return (
-    <section className="page catalog-home">
+    <section className="page category-selection-page">
+      <div className="selection-brand">
+        <Logo />
+        <span className="section-kicker">Catálogo Cerdex</span>
+      </div>
       <div className="page-heading">
-        <span className="section-kicker">Catálogo de productos</span>
-        <h1>¿Qué estás buscando?</h1>
-        <p>Selecciona una categoría para abrir su catálogo completo en una vista dedicada.</p>
+        <h1>¿Qué producto estás buscando?</h1>
+        <p>Selecciona una categoría para abrir el catálogo completo con el filtro correspondiente aplicado.</p>
       </div>
       <div className="catalog-category-grid">
         {categories.map((item, index) => (
@@ -307,7 +274,7 @@ function CatalogView() {
             <span className="catalog-card-title">{item.name}</span>
             <span className="catalog-card-copy">{item.copy}</span>
             <span className="catalog-card-link">
-              Explorar categoría <Icon name="arrow" size={17} />
+              Ver productos <Icon name="arrow" size={17} />
             </span>
           </AppButton>
         ))}
@@ -323,38 +290,134 @@ function CategoryView({
 }: {
   category: string;
   onOpenProduct: (id: string) => void;
-  onAdd: (id: string) => void;
+  onAdd: (id: string, quantity?: number) => void;
 }) {
   const [search, setSearch] = useState("");
   const [line, setLine] = useState("Todas");
-  const categoryData = categories.find((item) => item.key === category) ?? categories[0];
-  const categoryProducts = catalogProducts.filter((product) => product.categoriaVista === categoryData.key);
-  const availableLines = ["Todas", ...Array.from(new Set(categoryProducts.map((product) => product.line))).sort()];
-  const visible = useMemo(() => {
+  const [selectedCategory, setSelectedCategory] = useState(
+    categories.some((item) => item.key === category) ? category : "Todas"
+  );
+
+  useEffect(() => {
+    setSelectedCategory(categories.some((item) => item.key === category) ? category : "Todas");
+    setLine("Todas");
+  }, [category]);
+
+  const groupsForCategory = useMemo(() => {
+    return selectedCategory === "Todas"
+      ? catalogGroups
+      : catalogGroups.filter((g) => g.categoriaVista === selectedCategory);
+  }, [selectedCategory]);
+
+  const availableLines = useMemo(() => {
+    const lines = Array.from(new Set(groupsForCategory.map((g) => g.linea))).filter(Boolean).sort();
+    return ["Todas", ...lines];
+  }, [groupsForCategory]);
+
+  const visibleGroups = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return categoryProducts.filter(
-      (product) =>
-        (line === "Todas" || product.line === line) &&
-        (!query ||
-          `${product.descripcion} ${product.material} ${product.line} ${product.tipo}`.toLowerCase().includes(query)),
+    return catalogGroups.filter((g) => {
+      if (!query) return true;
+      const variantKeywords = g.variants.map((v) => `${v.descripcion} ${v.optionLabel}`).join(" ");
+      const fullText = `${g.title} ${g.linea} ${g.tipo} ${g.uso} ${g.superficie} ${variantKeywords}`.toLowerCase();
+      return fullText.includes(query);
+    });
+  }, [search]);
+
+  const prioritized = visibleGroups.filter(
+    (g) =>
+      (selectedCategory === "Todas" || g.categoriaVista === selectedCategory) &&
+      (line === "Todas" || g.linea === line)
+  );
+
+  const prioritizedIds = new Set(prioritized.map((g) => g.id));
+  const remaining = visibleGroups.filter((g) => !prioritizedIds.has(g.id));
+
+  const renderGroupCards = (groups: CatalogGroup[], keyPrefix: string) => {
+    return (
+      <div className="listing-grid">
+        {groups.map((group, index) => {
+          return (
+            <article
+              className={`listing-card ${
+                selectedCategory !== "Todas" && group.categoriaVista === selectedCategory ? "prioritized-card" : ""
+              }`}
+              key={`${keyPrefix}-${group.id}-${index}`}
+            >
+              <AppButton className="product-open-area" onClick={() => onOpenProduct(group.id)}>
+                <div className="listing-media">
+                  <ProductVisual
+                    imageSrc={group.mainImage}
+                    fallbackCategory={group.categoriaVista}
+                    alt={group.title}
+                  />
+                </div>
+                <div className="listing-copy">
+                  <span className="line-tag">
+                    Línea {group.linea}
+                    {group.calidad ? ` · ${group.calidad}` : ""}
+                  </span>
+                  <h2>{group.title}</h2>
+                  <div className="listing-specs">
+                    {group.uso && <span>{group.uso}</span>}
+                    {group.superficie && <span>{group.superficie}</span>}
+                  </div>
+                  <span className="view-detail">
+                    Ver información completa <Icon name="chevron" size={16} />
+                  </span>
+                </div>
+              </AppButton>
+              <div className="listing-footer">
+                <div>
+                  <small>Precio</small>
+                  <strong>{group.precioVenta || "Consultar"}</strong>
+                </div>
+                <AppButton
+                  onClick={() =>
+                    group.isGroup ? onOpenProduct(group.id) : onAdd(group.variants[0].material)
+                  }
+                >
+                  <Icon name={group.isGroup ? "arrow" : "cart"} size={17} />
+                  {group.isGroup
+                    ? group.optionType === "Medida"
+                      ? "Ver tamaños"
+                      : group.optionType === "Color"
+                      ? "Ver colores"
+                      : group.optionType === "Grano"
+                      ? "Ver granos"
+                      : "Ver opciones"
+                    : "Añadir a cotización"}
+                </AppButton>
+              </div>
+            </article>
+          );
+        })}
+      </div>
     );
-  }, [categoryProducts, line, search]);
+  };
 
   return (
     <section className="page category-page">
-      <div className="category-hero">
-        <AppButton className="back-button" onClick={() => navigate("#catalogo")}>
-          <Icon name="back" size={18} /> Todas las categorías
+      <div className="catalog-nav-header">
+        <AppButton className="back-to-categories-btn" onClick={() => navigate("#")}>
+          <Icon name="back" size={18} />
+          <span>Volver a Categorías</span>
         </AppButton>
-        <div className="category-hero-main">
-          <span className="category-hero-icon">
-            <Icon name={categoryData.icon} size={48} />
-          </span>
-          <div>
-            <span>Catálogo Cerdex</span>
-            <h1>{categoryData.name}</h1>
-            <p>{categoryData.copy}</p>
+        {selectedCategory !== "Todas" && (
+          <div className="current-view-badge">
+            Categoría: <strong>{categories.find((c) => c.key === selectedCategory)?.name || selectedCategory}</strong>
           </div>
+        )}
+      </div>
+
+      <div className="catalog-brand-row">
+        <Logo />
+        <div>
+          <span className="section-kicker">Catálogo de productos</span>
+          <h1>Catálogo de Productos</h1>
+          <p>
+            Filtra por categoría o línea y encuentra rápidamente la herramienta adecuada para tu proyecto.
+          </p>
         </div>
       </div>
 
@@ -364,10 +427,27 @@ function CategoryView({
           <span>Filtrar catálogo</span>
         </div>
         <label className="select-field">
+          <span>Categoría prioritaria</span>
+          <select
+            value={selectedCategory}
+            onChange={(event) => {
+              setSelectedCategory(event.target.value);
+              setLine("Todas");
+            }}
+          >
+            <option value="Todas">Todas</option>
+            {categories.map((item) => (
+              <option value={item.key} key={item.key}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="select-field">
           <span>Línea</span>
           <select value={line} onChange={(event) => setLine(event.target.value)}>
             {availableLines.map((item, index) => (
-              <option key={`${categoryData.key}-line-${item || "sin-linea"}-${index}`}>{item}</option>
+              <option key={`${selectedCategory}-line-${item || "sin-linea"}-${index}`}>{item}</option>
             ))}
           </select>
         </label>
@@ -377,52 +457,38 @@ function CategoryView({
             aria-label="Buscar productos"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nombre, código o tipo..."
+            placeholder="Buscar por nombre, línea o tipo..."
           />
         </label>
-        <span className="results-count">{visible.length} resultados</span>
       </div>
 
-      <div className="listing-grid">
-        {visible.map((product, index) => (
-          <article
-            className="listing-card"
-            key={`${categoryData.key}-${product.material}-${product.codigoLinea}-${index}`}
-          >
-            <AppButton className="product-open-area" onClick={() => onOpenProduct(product.material)}>
-              <div className="listing-media">
-                <ProductVisual product={product} />
-                <span>{product.material}</span>
-              </div>
-              <div className="listing-copy">
-                <span className="line-tag">
-                  Línea {product.line}
-                  {product.calidad ? ` · ${product.calidad}` : ""}
-                </span>
-                <h2>{product.descripcion}</h2>
-                <div className="listing-specs">
-                  {product.uso && <span>{product.uso}</span>}
-                  {product.superficie && <span>{product.superficie}</span>}
-                </div>
-                <span className="view-detail">
-                  Ver información completa <Icon name="chevron" size={16} />
-                </span>
-              </div>
-            </AppButton>
-            <div className="listing-footer">
-              <div>
-                <small>Precio</small>
-                <strong>{product.precioVenta || "Consultar"}</strong>
-              </div>
-              <AppButton onClick={() => onAdd(product.material)}>
-                <Icon name="cart" size={17} /> Agregar al carrito
-              </AppButton>
+      <div className="catalog-results-heading">
+        <div>
+          <span>Mostrando primero</span>
+          <h2>
+            {selectedCategory === "Todas"
+              ? "Todos los productos"
+              : categories.find((item) => item.key === selectedCategory)?.name}
+          </h2>
+        </div>
+        <strong>{prioritized.length} productos</strong>
+      </div>
+      {renderGroupCards(prioritized, "prioritized")}
+
+      {remaining.length > 0 && (selectedCategory !== "Todas" || line !== "Todas") && (
+        <div className="remaining-products">
+          <div className="catalog-results-heading">
+            <div>
+              <span>Continúa explorando</span>
+              <h2>Resto del catálogo</h2>
             </div>
-          </article>
-        ))}
-      </div>
+            <strong>{remaining.length} productos</strong>
+          </div>
+          {renderGroupCards(remaining, "remaining")}
+        </div>
+      )}
 
-      {visible.length === 0 && (
+      {visibleGroups.length === 0 && (
         <div className="empty-state">
           <Icon name="search" size={38} />
           <strong>No encontramos productos</strong>
@@ -433,93 +499,283 @@ function CategoryView({
   );
 }
 
-const fieldLabels: Array<[keyof CatalogProduct, string]> = [
-  ["material", "Material"],
-  ["marca", "Marca"],
-  ["linea", "Línea"],
-  ["codigoLinea", "Código de línea"],
-  ["prioridad", "Prioridad"],
-  ["tipo", "Tipo"],
-  ["descripcion", "Descripción"],
-  ["uv", "U.V."],
-  ["calidad", "Calidad"],
-  ["categoria", "Categoría"],
-  ["sugerencia", "Sugerencia"],
-  ["uso", "Uso"],
-  ["superficie", "Superficie"],
-  ["detalles", "Detalles"],
-  ["precioVenta", "Precio Venta"],
-  ["precioMin", "Precio mínimo"],
-  ["precioMax", "Precio máximo"],
-  ["imagenColor", "Imagen color"],
-  ["fichaTecnica", "Ficha técnica"],
-];
+function ProductInformationCards({ product }: { product: CatalogProduct }) {
+  const classificationFields: [string, string][] = [
+    ["Marca", product.marca],
+    ["Línea", product.linea],
+    ["Categoría", product.categoria],
+    ["Tipo", product.tipo],
+    ["Calidad", product.calidad],
+    ["Unidad de empaque", product.uv ? `${product.uv} unidad(es)` : ""],
+  ].filter(([, val]) => Boolean(val && val.trim())) as [string, string][];
 
-function DetailView({ product, onAdd }: { product: CatalogProduct; onAdd: (id: string) => void }) {
-  const categoryName = categories.find((item) => item.key === product.categoriaVista)?.name ?? product.categoriaVista;
+  const applicationFields: [string, string][] = [
+    ["Uso recomendado", product.uso],
+    ["Superficie", product.superficie],
+    ["Sugerencia de aplicación", product.sugerencia],
+  ].filter(([, val]) => Boolean(val && val.trim())) as [string, string][];
+
+  const descriptionFields: [string, string][] = [
+    ["Producto", product.descripcion],
+    ["Detalles", product.detalles],
+  ].filter(([, val]) => Boolean(val && val.trim())) as [string, string][];
+
+  const informationGroups = [
+    {
+      title: "Clasificación",
+      icon: "filter" as IconName,
+      fields: classificationFields,
+    },
+    {
+      title: "Aplicación",
+      icon: "brush" as IconName,
+      fields: applicationFields,
+    },
+    {
+      title: "Descripción",
+      icon: "tool" as IconName,
+      fields: descriptionFields,
+    },
+  ].filter((group) => group.fields.length > 0);
+
   return (
-    <section className="page detail-page">
+    <div className="product-info-groups">
+      {informationGroups.map((group) => (
+        <article className="product-info-card" key={group.title}>
+          <span className="info-card-icon">
+            <Icon name={group.icon} size={25} />
+          </span>
+          <h3>{group.title}</h3>
+          <dl>
+            {group.fields.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function GroupedProductDetailView({
+  group,
+  initialVariantId = null,
+  onAdd,
+}: {
+  group: CatalogGroup;
+  initialVariantId?: string | null;
+  onAdd: (id: string, quantity?: number) => void;
+}) {
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(() => {
+    if (initialVariantId) return initialVariantId;
+    if (!group.isGroup && group.variants.length === 1) {
+      return group.variants[0].material;
+    }
+    return null;
+  });
+
+  const selectedVariant = selectedVariantId
+    ? group.variants.find((v) => v.material === selectedVariantId)
+    : (!group.isGroup && group.variants.length === 1 ? group.variants[0] : undefined);
+
+  const [selectedImage, setSelectedImage] = useState<string>(() => {
+    if (selectedVariant?.optionImage) return selectedVariant.optionImage;
+    return group.mainImage || "";
+  });
+
+  const [quantity, setQuantity] = useState(1);
+
+  useEffect(() => {
+    if (initialVariantId) {
+      setSelectedVariantId(initialVariantId);
+      const v = group.variants.find((item) => item.material === initialVariantId);
+      if (v?.optionImage) setSelectedImage(v.optionImage);
+      else setSelectedImage(group.mainImage || "");
+    } else if (!group.isGroup && group.variants.length === 1) {
+      setSelectedVariantId(group.variants[0].material);
+      if (group.variants[0].optionImage) setSelectedImage(group.variants[0].optionImage);
+      else setSelectedImage(group.mainImage || "");
+    } else {
+      setSelectedVariantId(null);
+      setSelectedImage(group.mainImage || "");
+    }
+    setQuantity(1);
+  }, [group, initialVariantId]);
+
+  const displayProduct = selectedVariant ?? group.baseProduct;
+  const categoryName = categories.find((c) => c.key === group.categoriaVista)?.name || group.categoriaVista;
+
+  const optionPromptText =
+    group.optionType === "Medida"
+      ? "Selecciona una medida"
+      : group.optionType === "Color"
+      ? "Selecciona un color"
+      : group.optionType === "Grano"
+      ? "Selecciona un grano"
+      : "Selecciona una opción";
+
+  return (
+    <section className="page detail-page picasso-detail-page">
       <div className="breadcrumbs">
         <AppButton onClick={() => navigate("#catalogo")}>Catálogo</AppButton>
         <Icon name="chevron" size={14} />
-        <AppButton onClick={() => navigate(`#categoria/${product.categoriaVista}`)}>{categoryName}</AppButton>
+        <AppButton onClick={() => navigate(`#categoria/${group.categoriaVista}`)}>{categoryName}</AppButton>
         <Icon name="chevron" size={14} />
-        <span>{product.material}</span>
+        <span>{group.title}</span>
       </div>
 
       <div className="detail-layout">
-        <div className="detail-media">
-          <ProductVisual product={product} large />
-          <span className="detail-code">{product.material}</span>
+        <div className="variant-gallery">
+          <div className="detail-media picasso-main-media">
+            <ProductVisual
+              imageSrc={selectedImage}
+              fallbackCategory={group.categoriaVista}
+              alt={selectedVariant ? selectedVariant.descripcion : group.title}
+              large
+            />
+          </div>
+
+          {group.isGroup && (
+            <div className="variant-thumbnails" aria-label={`Seleccionar ${group.optionType || "opción"}`}>
+              {group.variants.map((variant) => {
+                const isSelected = selectedVariantId === variant.material;
+                const vImg = variant.optionImage || group.mainImage;
+                return (
+                  <AppButton
+                    className={`variant-option-btn ${isSelected ? "active" : ""}`}
+                    key={variant.material}
+                    onClick={() => {
+                      setSelectedVariantId(variant.material);
+                      if (variant.optionImage) setSelectedImage(variant.optionImage);
+                      else if (group.mainImage) setSelectedImage(group.mainImage);
+                      setQuantity(1);
+                    }}
+                    aria-label={`Seleccionar ${variant.optionLabel}`}
+                  >
+                    {vImg ? (
+                      <img src={vImg} alt={variant.optionLabel} />
+                    ) : (
+                      <div className="variant-placeholder-icon">
+                        <Icon name={categoryIcon(group.categoriaVista)} size={24} />
+                      </div>
+                    )}
+                    <span>{variant.optionLabel}</span>
+                  </AppButton>
+                );
+              })}
+            </div>
+          )}
         </div>
+
         <div className="detail-summary">
           <span className="line-tag">
-            Línea {product.line}
-            {product.calidad ? ` · ${product.calidad}` : ""}
+            Línea {group.linea}
+            {group.calidad ? ` · ${group.calidad}` : ""}
           </span>
-          <h1>{product.descripcion}</h1>
-          <p className="detail-intro">{product.detalles || "Consulta todos los datos técnicos de este producto Cerdex."}</p>
-          <div className="detail-highlights">
-            <div>
-              <small>Uso recomendado</small>
-              <strong>{product.uso || "No indicado"}</strong>
+          <h1>
+            {selectedVariant
+              ? group.optionType === "Medida" && !group.title.includes(selectedVariant.optionLabel)
+                ? `${group.title} ${selectedVariant.optionLabel}`
+                : `${group.title} (${selectedVariant.optionLabel})`
+              : group.title}
+          </h1>
+          <p className="detail-intro">
+            {displayProduct.detalles || "Herramienta Cerdex para acabados precisos, alta durabilidad y máximo rendimiento."}
+          </p>
+
+          {group.isGroup && (
+            <div className="selected-variant">
+              <span>{group.optionType || "Opción"} seleccionada</span>
+              <strong>
+                {selectedVariant ? selectedVariant.optionLabel : optionPromptText}
+              </strong>
             </div>
-            <div>
-              <small>Superficie</small>
-              <strong>{product.superficie || "No indicada"}</strong>
-            </div>
-            <div>
-              <small>Tipo</small>
-              <strong>{product.tipo || "No indicado"}</strong>
-            </div>
+          )}
+
+          <div className="features-heading">
+            <span>Características destacadas</span>
           </div>
-          <div className="detail-buy">
-            <div>
-              <small>Precio de venta</small>
-              <strong>{product.precioVenta || "Consultar"}</strong>
+          <ul className="characteristics-list">
+            <li>
+              <span>
+                <Icon name="brush" size={19} />
+              </span>
+              <div>
+                <strong>Uso recomendado</strong>
+                <p>{displayProduct.uso || "Consulta con nuestro equipo técnico"}</p>
+              </div>
+            </li>
+            <li>
+              <span>
+                <Icon name="surface" size={19} />
+              </span>
+              <div>
+                <strong>Superficie</strong>
+                <p>{displayProduct.superficie || "Maderas, metales y superficies en general"}</p>
+              </div>
+            </li>
+            <li>
+              <span>
+                <Icon name="tool" size={19} />
+              </span>
+              <div>
+                <strong>Tipo de producto</strong>
+                <p>{group.tipo || displayProduct.tipo || "Producto Cerdex"}</p>
+              </div>
+            </li>
+          </ul>
+
+          <div className="variant-purchase">
+            <div className="variant-quantity">
+              <span>Cantidad</span>
+              <div>
+                <AppButton
+                  aria-label="Restar cantidad"
+                  disabled={group.isGroup && !selectedVariant}
+                  onClick={() => setQuantity((current) => Math.max(1, current - 1))}
+                >
+                  <Icon name="minus" size={16} />
+                </AppButton>
+                <strong>{quantity}</strong>
+                <AppButton
+                  aria-label="Sumar cantidad"
+                  disabled={group.isGroup && !selectedVariant}
+                  onClick={() => setQuantity((current) => current + 1)}
+                >
+                  <Icon name="plus" size={16} />
+                </AppButton>
+              </div>
             </div>
-            <AppButton onClick={() => onAdd(product.material)}>
-              <Icon name="cart" size={20} /> Agregar al carrito
+
+            <AppButton
+              className="variant-add-button"
+              disabled={group.isGroup && !selectedVariant}
+              onClick={() => {
+                if (selectedVariant) {
+                  onAdd(selectedVariant.material, quantity);
+                }
+              }}
+            >
+              <Icon name="cart" size={20} />
+              {selectedVariant ? "Añadir a cotización" : "Selecciona una opción"}
             </AppButton>
           </div>
-          <span className="quote-note">El archivo Excel no especifica precios para este producto.</span>
         </div>
       </div>
 
       <div className="excel-detail">
         <div className="excel-detail-heading">
-          <span>Ficha técnica · {product.material}</span>
           <h2>Información del producto</h2>
-          <p>Todos los datos del registro original, organizados en una lista clara y fácil de consultar.</p>
+          <p className="product-info-description">
+            {group.isGroup
+              ? `La información técnica se actualiza automáticamente al elegir la ${group.optionType.toLowerCase() || "opción"} deseada.`
+              : "Todos los datos y especificaciones organizados para una consulta rápida y clara."}
+          </p>
         </div>
-        <dl className="excel-fields">
-          {fieldLabels.map(([field, label]) => (
-            <div key={field}>
-              <dt>{label}</dt>
-              <dd>{product[field] || "No indicado"}</dd>
-            </div>
-          ))}
-        </dl>
+        <ProductInformationCards product={displayProduct} />
       </div>
     </section>
   );
@@ -543,33 +799,22 @@ function ChatWidget() {
       {open && (
         <section className="chat-card" aria-label="Chat con DEX">
           <div className="chat-header">
-            <Mascot />
             <div>
-              <strong>DEX</strong>
-              <span>
-                <i /> Asistente Cerdex en línea
-              </span>
+              <strong>DEX Asistente Cerdex</strong>
+              <span>¿En qué puedo ayudarte hoy?</span>
             </div>
-            <AppButton className="chat-close" aria-label="Cerrar asistente" onClick={() => setOpen(false)}>
-              <Icon name="close" size={17} />
+            <AppButton aria-label="Cerrar chat" onClick={() => setOpen(false)}>
+              <Icon name="close" size={18} />
             </AppButton>
           </div>
           <div className="chat-messages">
-            <span className="chat-time">Hoy</span>
-            <div className="message-row dex-message">
-              <Mascot />
-              <div>
-                <p>¡Hola! Soy DEX, tu asistente virtual de Cerdex.</p>
-                <p>Cuéntame qué proyecto tienes y te ayudo a encontrar el producto indicado.</p>
-                <small>Ahora</small>
-              </div>
+            <div className="chat-bubble-system">
+              ¡Hola! Soy Dex. Cuéntame qué superficie vas a pintar o qué proyecto tienes en mente y te recomendaré la
+              herramienta Cerdex perfecta.
             </div>
             {messages.map((message, index) => (
-              <div className="message-row user-message" key={`${message}-${index}`}>
-                <div>
-                  <p>{message}</p>
-                  <small>Ahora</small>
-                </div>
+              <div className="chat-bubble-user" key={`${message}-${index}`}>
+                {message}
               </div>
             ))}
           </div>
@@ -604,8 +849,7 @@ function ContactSection() {
   return (
     <section className="connect" id="contacto">
       <div className="connect-main">
-        <span className="section-kicker light">Mantente conectado</span>
-        <h2>Cerdex Connect</h2>
+        <h2>Mantente conectado</h2>
         <p>Suscríbete y recibe novedades, lanzamientos y consejos para llevar cada proyecto más lejos.</p>
         <form
           className="subscribe"
@@ -645,9 +889,8 @@ function ContactSection() {
 
 export default function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute());
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [cartOpen, setCartOpen] = useState(false);
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quote, setQuote] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const updateRoute = () => setRoute(parseRoute());
@@ -655,18 +898,18 @@ export default function App() {
     return () => window.removeEventListener("hashchange", updateRoute);
   }, []);
 
-  const cartProducts = Object.entries(cart)
+  const quoteProducts = Object.entries(quote)
     .map(([id, quantity]) => ({ product: catalogProducts.find((item) => item.material === id), quantity }))
     .filter((item): item is { product: CatalogProduct; quantity: number } => Boolean(item.product));
-  const cartCount = cartProducts.reduce((total, item) => total + item.quantity, 0);
+  const quoteCount = quoteProducts.reduce((total, item) => total + item.quantity, 0);
 
-  const addToCart = (id: string) => {
-    setCart((current) => ({ ...current, [id]: (current[id] || 0) + 1 }));
-    setCartOpen(true);
+  const addToQuote = (id: string, quantity = 1) => {
+    setQuote((current) => ({ ...current, [id]: (current[id] || 0) + quantity }));
+    setQuoteOpen(true);
   };
 
   const changeQuantity = (id: string, change: number) => {
-    setCart((current) => {
+    setQuote((current) => {
       const next = (current[id] || 0) + change;
       if (next <= 0) {
         const copy = { ...current };
@@ -677,84 +920,48 @@ export default function App() {
     });
   };
 
-  const selectedProduct =
-    route.view === "detail" ? catalogProducts.find((product) => product.material === route.productId) : undefined;
+  // Resolve group for detail view
+  const activeProductId = route.view === "detail" ? route.productId : null;
+  const activeGroup = activeProductId ? findCatalogGroup(activeProductId) : undefined;
+  const initialVariantId =
+    activeGroup && activeProductId && activeGroup.variants.some((v) => v.material === activeProductId)
+      ? activeProductId
+      : null;
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="nav-wrap">
-          <AppButton className="brand-link" onClick={() => navigate("#inicio")} aria-label="Ir al inicio">
-            <Logo />
-          </AppButton>
-          <nav className={mobileOpen ? "nav-links nav-open" : "nav-links"} aria-label="Navegación principal">
-            <AppButton
-              className={route.view === "home" ? "active" : ""}
-              onClick={() => {
-                navigate("#inicio");
-                setMobileOpen(false);
-              }}
-            >
-              Inicio
-            </AppButton>
-            <AppButton
-              className={route.view !== "home" ? "active" : ""}
-              onClick={() => {
-                navigate("#catalogo");
-                setMobileOpen(false);
-              }}
-            >
-              Catálogo
-            </AppButton>
-            <AppButton
-              onClick={() => {
-                navigate("#inicio");
-                setMobileOpen(false);
-                setTimeout(() => document.querySelector("#nosotros")?.scrollIntoView({ behavior: "smooth" }), 50);
-              }}
-            >
-              Quiénes Somos
-            </AppButton>
-            <AppButton
-              onClick={() => {
-                navigate("#inicio");
-                setMobileOpen(false);
-                setTimeout(() => document.querySelector("#contacto")?.scrollIntoView({ behavior: "smooth" }), 50);
-              }}
-            >
-              Contacto
-            </AppButton>
-          </nav>
-          <div className="nav-actions">
-            <AppButton className="cart-trigger" aria-label="Abrir carrito" onClick={() => setCartOpen(true)}>
-              <Icon name="cart" size={23} />
-              <span className="cart-count">{cartCount}</span>
-            </AppButton>
-            <AppButton className="mobile-trigger" aria-label="Abrir menú" onClick={() => setMobileOpen((open) => !open)}>
-              <Icon name={mobileOpen ? "close" : "menu"} size={24} />
-            </AppButton>
-          </div>
-        </div>
-      </header>
-
       <main>
-        {route.view === "home" && <HomeView />}
-        {route.view === "catalog" && <CatalogView />}
+        {route.view === "home" && <CategorySelectionView />}
+        {route.view === "catalog" && (
+          <CategoryView
+            category="Todas"
+            onOpenProduct={(id) => navigate(`#producto/${id}`)}
+            onAdd={addToQuote}
+          />
+        )}
         {route.view === "category" && (
           <CategoryView
             category={route.category}
             onOpenProduct={(id) => navigate(`#producto/${id}`)}
-            onAdd={addToCart}
+            onAdd={addToQuote}
           />
         )}
-        {route.view === "detail" && selectedProduct && <DetailView product={selectedProduct} onAdd={addToCart} />}
-        {route.view === "detail" && !selectedProduct && (
+        {route.view === "detail" && activeGroup && (
+          <GroupedProductDetailView
+            group={activeGroup}
+            initialVariantId={initialVariantId}
+            onAdd={addToQuote}
+          />
+        )}
+        {route.view === "detail" && !activeGroup && (
           <section className="page empty-state">
             <strong>Producto no encontrado</strong>
             <AppButton onClick={() => navigate("#catalogo")}>Volver al catálogo</AppButton>
           </section>
         )}
       </main>
+
+      <ContactSection />
 
       <footer>
         <div className="footer-inner">
@@ -767,58 +974,82 @@ export default function App() {
         </div>
       </footer>
 
-      <div className={`drawer-backdrop ${cartOpen ? "visible" : ""}`} onClick={() => setCartOpen(false)} />
-      <aside className={`cart-drawer ${cartOpen ? "open" : ""}`} aria-hidden={!cartOpen}>
+      <AppButton className="quote-fab" onClick={() => setQuoteOpen(true)}>
+        <Icon name="cart" size={19} />
+        <span>Mi cotización</span>
+        <strong>{quoteCount}</strong>
+      </AppButton>
+
+      <div className={`drawer-backdrop ${quoteOpen ? "visible" : ""}`} onClick={() => setQuoteOpen(false)} />
+      <aside className={`cart-drawer ${quoteOpen ? "open" : ""}`} aria-hidden={!quoteOpen}>
         <div className="drawer-head">
           <div>
             <span>Tu selección</span>
-            <h2>Carrito de Compras</h2>
+            <h2>Mi cotización</h2>
           </div>
-          <AppButton aria-label="Cerrar carrito" onClick={() => setCartOpen(false)}>
+          <AppButton aria-label="Cerrar cotización" onClick={() => setQuoteOpen(false)}>
             <Icon name="close" size={22} />
           </AppButton>
         </div>
         <div className="cart-items">
-          {cartProducts.map(({ product, quantity }) => (
-            <div className="cart-item" key={product.material}>
-              <div className="cart-thumb">
-                <ProductVisual product={product} />
-              </div>
-              <div className="cart-info">
-                <small>{product.line}</small>
-                <strong>{product.descripcion}</strong>
-                <span>{product.material}</span>
-                <div className="quantity">
-                  <AppButton aria-label="Restar unidad" onClick={() => changeQuantity(product.material, -1)}>
-                    <Icon name="minus" size={14} />
-                  </AppButton>
-                  <span>{quantity}</span>
-                  <AppButton aria-label="Sumar unidad" onClick={() => changeQuantity(product.material, 1)}>
-                    <Icon name="plus" size={14} />
-                  </AppButton>
-                  <AppButton
-                    className="delete"
-                    aria-label="Eliminar"
-                    onClick={() => changeQuantity(product.material, -quantity)}
-                  >
-                    <Icon name="trash" size={16} />
-                  </AppButton>
+          {quoteProducts.map(({ product, quantity }) => {
+            const img = imageByProduct[product.material] || imageByProduct[product.codigoLinea];
+            return (
+              <div className="cart-item" key={product.material}>
+                <div className="cart-thumb">
+                  {img ? (
+                    <img src={img} alt={product.descripcion} style={{ width: "100%", height: "100%", objectFit: "contain", background: "#fff" }} />
+                  ) : (
+                    <ProductVisual fallbackCategory={product.categoriaVista} alt={product.descripcion} />
+                  )}
+                </div>
+                <div className="cart-info">
+                  <small>{product.linea}</small>
+                  <strong>{product.descripcion}</strong>
+                  <div className="quantity">
+                    <AppButton aria-label="Restar unidad" onClick={() => changeQuantity(product.material, -1)}>
+                      <Icon name="minus" size={14} />
+                    </AppButton>
+                    <span>{quantity}</span>
+                    <AppButton aria-label="Sumar unidad" onClick={() => changeQuantity(product.material, 1)}>
+                      <Icon name="plus" size={14} />
+                    </AppButton>
+                    <AppButton
+                      className="trash-btn"
+                      aria-label="Eliminar producto"
+                      onClick={() => changeQuantity(product.material, -quantity)}
+                    >
+                      <Icon name="trash" size={14} />
+                    </AppButton>
+                  </div>
                 </div>
               </div>
+            );
+          })}
+          {quoteProducts.length === 0 && (
+            <div className="empty-cart">
+              <Icon name="cart" size={36} />
+              <span>Tu cotización está vacía</span>
+              <small>Explora el catálogo y añade los productos que necesitas cotizar.</small>
             </div>
-          ))}
-          {!cartProducts.length && <div className="cart-empty">Tu carrito está vacío.</div>}
+          )}
         </div>
-        <div className="cart-summary">
-          <div className="total-row">
-            <span>Total</span>
-            <strong>Cotización</strong>
+        {quoteProducts.length > 0 && (
+          <div className="cart-footer">
+            <AppButton
+              className="primary-cta checkout-btn"
+              onClick={() => {
+                const productList = quoteProducts
+                  .map(({ product, quantity }) => `• ${product.descripcion} (Cantidad: ${quantity})`)
+                  .join("%0A");
+                const message = `Hola Cerdex, deseo solicitar una cotización para los siguientes productos:%0A${productList}`;
+                window.open(`https://wa.me/?text=${message}`, "_blank");
+              }}
+            >
+              Solicitar Cotización por WhatsApp <Icon name="arrow" size={16} />
+            </AppButton>
           </div>
-          <AppButton className="checkout">
-            Solicitar Cotización <Icon name="arrow" size={18} />
-          </AppButton>
-          <small>Un asesor confirmará disponibilidad y precios vigentes.</small>
-        </div>
+        )}
       </aside>
 
       <ChatWidget />
